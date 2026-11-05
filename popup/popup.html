@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bilibili Downloader</title>
+  <link rel="stylesheet" href="../shared.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="message" class="message" hidden></div>
+
+  <main id="main" hidden>
+    <header class="video">
+      <img id="cover" alt="">
+      <div>
+        <h1 id="title"></h1>
+        <p id="owner" class="muted"></p>
+      </div>
+    </header>
+
+    <label id="partRow" hidden>Part
+      <select id="part"></select>
+    </label>
+
+    <div id="dashControls">
+      <label>Video
+        <select id="video"></select>
+      </label>
+      <label>Audio
+        <select id="audio"></select>
+      </label>
+    </div>
+
+    <p id="hint" class="hint" hidden></p>
+
+    <button id="downloadMerged" class="primary">Download MP4</button>
+    <div class="row">
+      <button id="downloadVideo">Video only</button>
+      <button id="downloadAudio">Audio only</button>
+      <button id="downloadCover">Cover</button>
+    </div>
+    <div id="segments" class="row" hidden></div>
+
+    <p id="status" class="muted small"></p>
+  </main>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

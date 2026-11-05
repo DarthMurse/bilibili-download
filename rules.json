@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        { "header": "Referer", "operation": "set", "value": "https://www.bilibili.com/" },
+        { "header": "Origin", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "regexFilter": "^https?://([^/]*\\.bilivideo\\.(com|cn)|upos-[^/]*\\.akamaized\\.net)(:[0-9]+)?/",
+      "excludedInitiatorDomains": ["bilibili.com"],
+      "resourceTypes": ["xmlhttprequest", "media", "other"]
+    }
+  }
+]

@@ -1,9 +1,11 @@
 // Download page for "Download MP4": streams the video and audio DASH files through
 // mp4merge.js into a temporary file on disk (the extension's origin-private file system),
-// then hands that file to chrome.downloads. Memory use stays at a few dozen MB regardless of
-// video size. It lives in a tab (not the popup) because the popup dies when it loses focus.
+// then repackages it as a regular MP4 and hands that file to chrome.downloads. Media is
+// streamed; sample indexes grow with the number of frames. It lives in a tab (not the popup)
+// because the popup dies when it loses focus.
 
 import { mergeStreams } from '../lib/mp4merge.js';
+import { regularizeMp4 } from '../lib/mp4regular.js';
 import { RemoteFile } from '../lib/remote.js';
 import { buildStreams, getPlayUrl, formatSize } from '../lib/api.js';
 
@@ -117,22 +119,42 @@ async function run() {
   videoProgress.total = video.size;
   audioProgress.total = audio.size;
 
-  const needed = video.size + audio.size;
+  // The fragmented intermediate and regular MP4 coexist during finalization.
+  // Leave room for the rebuilt sample indexes as well as the media bytes.
+  const needed = 2 * (video.size + audio.size) + 16 * 1024 * 1024;
   const { quota, usage } = await navigator.storage.estimate();
   if (quota - usage < needed) {
     throw new Error(`Not enough free disk space: need ${formatSize(needed)}, have ${formatSize(quota - usage)}`);
   }
 
+  const intermediateName = `${id}.fragmented.mp4`;
   const tempName = `${id}.mp4`;
-  const handle = await dir.getFileHandle(tempName, { create: true });
-  const writable = await handle.createWritable();
-  setStatus('Downloading and merging…');
+  let writable, handle;
   try {
+    const intermediate = await dir.getFileHandle(intermediateName, { create: true });
+    writable = await intermediate.createWritable();
+    setStatus('Downloading and merging…');
     await mergeStreams(video, audio, (chunk) => writable.write(chunk));
-    setStatus('Finishing…');
     await writable.close();
+    writable = null;
+
+    setStatus('Preparing MP4 for editing… 0%');
+    handle = await dir.getFileHandle(tempName, { create: true });
+    writable = await handle.createWritable();
+    let lastPercent = -1;
+    await regularizeMp4(await intermediate.getFile(), (chunk) => writable.write(chunk), (progress) => {
+      const percent = Math.floor(progress * 100);
+      if (percent !== lastPercent) {
+        setStatus(`Preparing MP4 for editing… ${percent}%`);
+        lastPercent = percent;
+      }
+    });
+    await writable.close();
+    writable = null;
+    await dir.removeEntry(intermediateName);
   } catch (e) {
-    await writable.abort().catch(() => {});
+    await writable?.abort().catch(() => {});
+    await dir.removeEntry(intermediateName).catch(() => {});
     await dir.removeEntry(tempName).catch(() => {});
     throw e;
   }

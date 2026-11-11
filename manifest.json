@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Bilibili Downloader",
-  "version": "1.1.0",
-  "description": "Download Bilibili videos as MP4. Video and audio streams are merged right in the browser.",
+  "version": "1.2.0",
+  "description": "Download Bilibili videos as regular MP4 files. Video and audio are merged locally without re-encoding.",
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "Download this Bilibili video",

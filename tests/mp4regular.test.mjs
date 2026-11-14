@@ -28,12 +28,12 @@ function at(b, ...path) {
   for (const type of path) { parent = child(b, parent, type); assert.ok(parent, `missing ${type}`); }
   return parent;
 }
-function init({ id = 1, scale = 1000, duration = 10, size = 2, edits = false } = {}) {
+function init({ id = 1, scale = 1000, duration = 10, size = 2, edits = false, groups = [] } = {}) {
   const tkhd = box('tkhd', words(7, 0, 0, id, 0, 0), Buffer.alloc(60));
   const mdhd = box('mdhd', words(0, 0, 0, scale, 0, 0));
   const stsd = box('stsd', words(0, 1), box('avc1', Buffer.alloc(78)));
   const stbl = box('stbl', stsd, box('stts', words(0, 0)), box('stsc', words(0, 0)),
-    box('stsz', words(0, 0, 0)), box('stco', words(0, 0)));
+    box('stsz', words(0, 0, 0)), box('stco', words(0, 0)), ...groups);
   const edit = edits ? [box('edts', box('elst', edits === 'delay'
     ? words(0, 2, 33, -1, 0x10000, 0, 10, 0x10000)
     : words(0, 1, 0, 0, 0x10000)))] : [];
@@ -43,7 +43,7 @@ function init({ id = 1, scale = 1000, duration = 10, size = 2, edits = false } =
     trak, box('mvex', box('trex', words(0, id, 1, duration, size, 0))));
 }
 const ftyp = box('ftyp', Buffer.from('iso5'), words(0), Buffer.from('iso6dash'));
-function fragment({ id = 1, time = 0, cts = [20, -10, 0], absolute, defaults = false, invalidOffset = false, extended = false, toEof = false } = {}) {
+function fragment({ id = 1, time = 0, cts = [20, -10, 0], absolute, defaults = false, invalidOffset = false, extended = false, toEof = false, groups = [] } = {}) {
   const tfdt = box('tfdt', words(0x1000000, Math.floor(time / 2 ** 32), time >>> 0));
   const sampleCount = cts.length;
   const payload = Buffer.from(Array.from({ length: sampleCount * 2 }, (_, i) => (i + time) & 255));
@@ -52,7 +52,7 @@ function fragment({ id = 1, time = 0, cts = [20, -10, 0], absolute, defaults = f
     const tfhd = box('tfhd', words(absolute === undefined ? 0x20000 : 1, id), ...base);
     const fields = defaults ? [] : cts.flatMap((c, i) => [10, 2, i === 0 ? 0 : 0x10000, c]);
     const trun = box('trun', words(defaults ? 5 : 0x1000f01, sampleCount, offset, ...(defaults ? [0] : []), ...fields));
-    return box('moof', box('mfhd', words(0, 1)), box('traf', tfhd, tfdt, trun));
+    return box('moof', box('mfhd', words(0, 1)), box('traf', tfhd, tfdt, trun, ...groups));
   };
   const initial = makeMoof(0);
   const offset = invalidOffset ? 0 : initial.length + (extended ? 16 : 8);
@@ -159,7 +159,8 @@ test('existing streaming merger feeds two tracks into regularization', async () 
       async skip(n) { this.pos += n; } };
   }
   const video = Buffer.concat([ftyp, init(), fragment().bytes, fragment({ time: 30 }).bytes]);
-  const audio = Buffer.concat([ftyp, init({ scale: 48000 }), fragment({ defaults: true }).bytes]);
+  const audio = Buffer.concat([ftyp, init({ scale: 48000, groups: [rollDescription()] }),
+    fragment({ defaults: true, groups: [rollMapping([[3, 1]])] }).bytes]);
   const merged = [];
   await mergeStreams(remote(video), remote(audio), async (b) => merged.push(Buffer.from(b)));
   const out = await convert(Buffer.concat(merged)), root = at(out, 'moov');
@@ -172,7 +173,42 @@ test('existing streaming merger feeds two tracks into regularization', async () 
     const co64 = child(out, stbl, 'co64');
     const firstSample = Number(out.readBigUInt64BE(co64.body + 8));
     assert.deepEqual(out.subarray(firstSample, firstSample + 6), Buffer.from([0, 1, 2, 3, 4, 5]));
+    const mapping = child(out, stbl, 'sbgp');
+    if (i) assert.deepEqual(out.subarray(mapping.start, mapping.end), rollMapping([[3, 1]]));
+    else assert.equal(mapping, undefined);
   });
+});
+
+const rollDescription = (type = 'roll') => box('sgpd', words(0x1000000), Buffer.from(type), words(2, 1), Buffer.from([255, 255]));
+const rollMapping = (entries, { type = 'roll', version = 0, parameter = 0 } = {}) =>
+  box('sbgp', words(version << 24), Buffer.from(type), ...(version === 1 ? [words(parameter)] : []),
+    words(entries.length, ...entries.flat()));
+
+test('roll recovery mappings survive conversion across mapped and unmapped fragments', async () => {
+  const description = rollDescription();
+  const fragments = [fragment(), fragment({ time: 30, groups: [rollMapping([[3, 1]])] }),
+    fragment({ time: 60, groups: [rollMapping([[2, 1]], { version: 1 })] }), fragment({ time: 90 })];
+  const out = await convert(Buffer.concat([ftyp, init({ groups: [description] }), ...fragments.map(f => f.bytes)]));
+  const sgpd = at(out, 'moov', 'trak', 'mdia', 'minf', 'stbl', 'sgpd');
+  assert.deepEqual(out.subarray(sgpd.start, sgpd.end), description);
+  const sbgp = at(out, 'moov', 'trak', 'mdia', 'minf', 'stbl', 'sbgp');
+  assert.deepEqual(out.subarray(sbgp.start, sbgp.end), rollMapping([[3, 0], [5, 1], [4, 0]]));
+  assert.deepEqual(Buffer.concat(list(out).filter(x => x.type === 'mdat').map(x => out.subarray(x.body, x.end))),
+    Buffer.concat(fragments.map(f => f.payload)));
+});
+
+test('invalid, unknown, fragment-local and encrypted group data is rejected before writing', async () => {
+  for (const groups of [
+    [rollMapping([[4, 1]])], [rollMapping([[3, 2]])], [rollMapping([[3, 0x10001]])],
+    [rollMapping([[3, 1]], { type: 'seig' })], [rollMapping([[3, 1]], { version: 1, parameter: 1 })],
+    [rollMapping([[3, 1]]), rollMapping([[3, 1]])], [rollDescription()],
+    [box('senc', words(0, 0))], [box('saiz', words(0, 0))], [box('saio', words(0, 0))],
+  ]) {
+    let writes = 0;
+    const input = new Blob([ftyp, init({ groups: [rollDescription()] }), fragment({ groups }).bytes]);
+    await assert.rejects(regularizeMp4(input, async () => writes++), /Cannot finalize MP4/);
+    assert.equal(writes, 0);
+  }
 });
 
 // Opt-in real-world regression: MP4_FIXTURE points to the downloaded Bilibili file.

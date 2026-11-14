@@ -63,6 +63,8 @@ Choose AVC for the widest editing compatibility; AV1 is not supported by every e
 - The regular MP4's index is at the end of the file, suitable for local playback and editing.
   This is not a web fast-start optimization. Encrypted streams, discontinuous fragment timestamps,
   and unsupported fragment sample groups fail explicitly instead of producing an incomplete MP4.
+  Track-level `roll`/`prol` recovery descriptions and their fragment sample mappings are preserved,
+  including the AAC roll recovery metadata used by some Bilibili uploads.
 - If saving is cancelled (e.g. you dismiss a "Save as" dialog) the progress tab offers
   **Save again** without re-downloading.
 - Only regular `/video/` pages are supported — not bangumi/番剧, courses, or live streams.
